@@ -32,6 +32,8 @@ io.on('connection', (socket) => {
       state: 'lobby',
       questions: [],
       currentQuestionIndex: 0,
+      roundsCount: 3,
+      questionsPerRound: 10,
       timer: null,
       timeLeft: 30,
       isPaused: false,
@@ -55,28 +57,33 @@ io.on('connection', (socket) => {
     }
   });
 
-  // START GRY (Odbiera ilość rund i kategorie)
-  socket.on('startGame', ({ roomId, roundsCount, categories }) => {
+  // START GRY Z OBSŁUGĄ RUND I PYTAŃ
+  socket.on('startGame', ({ roomId, roundsCount, questionsPerRound, categories }) => {
     const room = rooms[roomId];
     if (room && room.host === socket.id && room.state === 'lobby') {
       room.state = 'playing';
-      const totalQuestions = roundsCount || 10;
       
-      // Filtrowanie pytań
+      const rCount = roundsCount || 3;
+      const qPerRound = questionsPerRound || 10;
+      const totalQuestions = rCount * qPerRound;
+
+      room.roundsCount = rCount;
+      room.questionsPerRound = qPerRound;
+      
       let pool = allQuestions;
       if (categories && categories.length > 0) {
         pool = allQuestions.filter(q => categories.includes(q.category));
       }
-      if (pool.length === 0) pool = allQuestions; // Zabezpieczenie, gdyby wybrano puste
+      if (pool.length === 0) pool = allQuestions; 
 
       room.questions = [...pool].sort(() => 0.5 - Math.random()).slice(0, totalQuestions);
       room.currentQuestionIndex = 0;
+      
       io.to(roomId).emit('gameStarted', { players: room.players });
       sendNextQuestion(roomId);
     }
   });
 
-  // PAUZA ONLINE
   socket.on('togglePause', ({ roomId }) => {
     const room = rooms[roomId];
     if (room && room.host === socket.id && room.state === 'playing') {
@@ -87,7 +94,6 @@ io.on('connection', (socket) => {
         room.pauseTime = Date.now();
         io.to(roomId).emit('gamePaused');
       } else {
-        // Wznowienie - dodajemy czas spędzony na pauzie, by bonusy za szybkość były sprawiedliwe
         room.questionStartTime += (Date.now() - room.pauseTime);
         startRoomTimer(roomId);
         io.to(roomId).emit('gameResumed');
@@ -95,7 +101,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // OPUSZCZANIE POKOJU
   socket.on('leaveRoom', ({ roomId }) => {
     const room = rooms[roomId];
     if (room) {
@@ -105,7 +110,6 @@ io.on('connection', (socket) => {
       if (room.players.length === 0) {
         delete rooms[roomId];
       } else if (room.host === socket.id) {
-        // Jeśli Host wyjdzie, zamykamy pokój wszystkim
         io.to(roomId).emit('errorMsg', 'Host opuścił grę. Pokój został zamknięty.');
         io.to(roomId).emit('gameOver', { players: room.players });
         delete rooms[roomId];
@@ -156,10 +160,16 @@ io.on('connection', (socket) => {
     room.timeLeft = 30;
     room.isPaused = false;
     
+    // Obliczanie obecnej rundy i pytania w rundzie dla frontendu
+    const roundNum = Math.floor(room.currentQuestionIndex / room.questionsPerRound) + 1;
+    const qInRound = (room.currentQuestionIndex % room.questionsPerRound) + 1;
+
     io.to(roomId).emit('newQuestion', {
       question: safeQuestion,
-      qNumber: room.currentQuestionIndex + 1,
-      total: room.questions.length
+      roundNumber: roundNum,
+      totalRounds: room.roundsCount,
+      qInRound: qInRound,
+      questionsPerRound: room.questionsPerRound
     });
 
     startRoomTimer(roomId);
@@ -172,21 +182,20 @@ io.on('connection', (socket) => {
     const currentQ = room.questions[room.currentQuestionIndex];
 
     const simpleAnswersForFrontend = {};
-    const pointsGained = {}; // <-- NOWE: Śledzenie zdobytych punktów w tej rundzie
+    const pointsGained = {}; 
 
     for (let [socketId, answerData] of Object.entries(room.answers)) {
       simpleAnswersForFrontend[socketId] = answerData.index; 
-      pointsGained[socketId] = 0; // Domyślnie 0 punktów za błędną
+      pointsGained[socketId] = 0; 
 
       if (answerData.index === currentQ.correct) {
         const player = room.players.find(p => p.id === socketId);
         if (player) {
-          // Maksymalnie 30 pkt bonusu za czas + 10 pkt bazy = max 40 pkt
           const speedBonus = Math.max(0, 30 - Math.floor(answerData.time)); 
-          const points = 10 + speedBonus; // Obliczamy punkty
+          const points = 10 + speedBonus; 
           
           player.score += points;
-          pointsGained[socketId] = points; // Zapisujemy ile gracz dostał
+          pointsGained[socketId] = points; 
         }
       }
     }
@@ -195,7 +204,7 @@ io.on('connection', (socket) => {
       correctIndex: currentQ.correct,
       answers: simpleAnswersForFrontend,
       players: room.players,
-      pointsGained: pointsGained // <-- NOWE: Wysyłamy paczkę z punktami na frontend
+      pointsGained: pointsGained 
     });
 
     room.currentQuestionIndex++;
