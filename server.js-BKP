@@ -172,21 +172,13 @@ io.on('connection', (socket) => {
     const currentQ = room.questions[room.currentQuestionIndex];
 
     const simpleAnswersForFrontend = {};
-    const pointsGained = {}; // <-- NOWE: Śledzenie zdobytych punktów w tej rundzie
-
     for (let [socketId, answerData] of Object.entries(room.answers)) {
       simpleAnswersForFrontend[socketId] = answerData.index; 
-      pointsGained[socketId] = 0; // Domyślnie 0 punktów za błędną
-
       if (answerData.index === currentQ.correct) {
         const player = room.players.find(p => p.id === socketId);
         if (player) {
-          // Maksymalnie 30 pkt bonusu za czas + 10 pkt bazy = max 40 pkt
           const speedBonus = Math.max(0, 30 - Math.floor(answerData.time)); 
-          const points = 10 + speedBonus; // Obliczamy punkty
-          
-          player.score += points;
-          pointsGained[socketId] = points; // Zapisujemy ile gracz dostał
+          player.score += (10 + speedBonus);
         }
       }
     }
@@ -194,8 +186,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('roundResult', {
       correctIndex: currentQ.correct,
       answers: simpleAnswersForFrontend,
-      players: room.players,
-      pointsGained: pointsGained // <-- NOWE: Wysyłamy paczkę z punktami na frontend
+      players: room.players
     });
 
     room.currentQuestionIndex++;
@@ -203,4 +194,4 @@ io.on('connection', (socket) => {
   }
 });
 
-server.listen(3000, () => console.log(`🚀 Serwer nasłuchuje!`));
+server.listen(3000, () => console.log(`🚀 Serwer nasłuchuje!`)); 
